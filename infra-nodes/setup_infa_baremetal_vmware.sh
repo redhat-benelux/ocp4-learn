@@ -1,0 +1,51 @@
+
+for host in infra1.cluster.corp infra2.cluster.corp infra3.cluster.corp
+do
+printf "%s" ${host}
+oc label node ${host} node-role.kubernetes.io/infra=""
+oc label node ${host} node-role.kubernetes.io/worker-
+oc patch node ${host} --type=merge -p '{"spec":{"taints": [{ "key":"infra", "value":"reserved", "effect":"NoSchedule"},{ "key":"infra", "value":"reserved", "effect":"NoExecute"}]}}'
+done
+
+
+oc create -f ./infra-mcp.yaml
+
+# Optional 
+# Adding this cause debug node to fail to schedule on masters, should not be the case as the default node selector is ony a suggestion
+
+oc patch scheduler cluster --type=merge -p '{"spec":{"defaultNodeSelector": "node-role.kubernetes.io/worker="}}'
+
+# oc debug node/invd086.nxdi.nl-htc01.nxp.com --> Fail Generated from kubelet on invd088.nxdi.nl-htc01.nxp.com Predicate MatchNodeSelector failed
+
+
+
+Then any node which have taint fail to schedule any debug node pod dur to the taint controller.
+Generated from taint-controller
+Marking for deletion Pod argocd/invd094nxdinl-htc01nxpcom-debug
+
+
+# allow the daemonsets to work on taint nodes
+oc patch ds machine-config-daemon -n openshift-machine-config-operator  --type=merge -p '{"spec": {"template": { "spec": {"tolerations":[{"operator":"Exists"}]}}}}'
+
+oc patch ds node-ca -n openshift-image-registry --type=merge -p '{"spec": {"template": { "spec": {"tolerations":[{"operator":"Exists"}]}}}}'
+
+oc patch namespace openshift-dns --type=merge -p '{"metadata": {"annotations": { "scheduler.alpha.kubernetes.io/defaultTolerations": "[{\"operator\": \"Exists\"}]"}}}'
+
+
+# https://docs.openshift.com/container-platform/4.3/machine_management/creating-infrastructure-machinesets.html#moving-resources-to-infrastructure-machinesets
+
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"nodePlacement":{"nodeSelector":{"matchLabels":{"node-role.kubernetes.io/infra":""}},"tolerations":[{"effect":"NoSchedule","key":"infra","operator":"Exists"},{"effect":"NoExecute","key":"infra","operator":"Exists"}]}}}'
+
+
+oc patch configs.imageregistry.operator.openshift.io/cluster -n openshift-image-registry --type=merge -p '{"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""},"tolerations":[{"effect":"NoSchedule","key":"infra","value":"reserved"},{"effect":"NoExecute","key":"infra","value":"reserved"}]}}'
+
+
+oc patch configs.imageregistry.operator.openshift.io/cluster -n openshift-image-registry --type=merge -p '{"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""},"tolerations":[{"effect":"NoSchedule","key":"infra","value":"reserved"},{"effect":"NoExecute","key":"infra","value":"reserved"}]}}'
+
+# Moving the monitoring comp
+oc apply -f ./cluster-monitoring-config.yaml
+
+# Missing on Request
+
+# Moving the cluster logging resources
+
