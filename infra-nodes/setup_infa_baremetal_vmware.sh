@@ -16,6 +16,7 @@ oc create -f ./infra-mcp.yaml
 oc patch scheduler cluster --type=merge -p '{"spec":{"defaultNodeSelector": "node-role.kubernetes.io/worker="}}'
 
 # oc debug node/invd086.nxdi.nl-htc01.nxp.com --> Fail Generated from kubelet on invd088.nxdi.nl-htc01.nxp.com Predicate MatchNodeSelector failed
+# you can overcome this issue by oc adm new-project debug --node-selector=""
 
 
 
