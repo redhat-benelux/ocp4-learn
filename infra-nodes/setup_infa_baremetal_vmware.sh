@@ -19,9 +19,11 @@ oc patch scheduler cluster --type=merge -p '{"spec":{"defaultNodeSelector": "nod
 
 
 
-Then any node which have taint fail to schedule any debug node pod dur to the taint controller.
-Generated from taint-controller
-Marking for deletion Pod argocd/invd094nxdinl-htc01nxpcom-debug
+#Then any node which have taint fail to schedule any debug node pod due to the taint controller. Generated from taint-controller Marking for deletion Pod argocd/invd094nxdinl-htc01nxpcom-debug
+# I reported a bug https://bugzilla.redhat.com/show_bug.cgi?id=1822211 & KB was published https://access.redhat.com/solutions/4976641
+
+# Add a toleration on a "dummy" namespace allowing the debug pod to run:
+# oc patch namespace dummy --type=merge -p '{"metadata": {"annotations": { "scheduler.alpha.kubernetes.io/defaultTolerations": "[{\"operator\": \"Exists\"}]"}}}'
 
 
 # allow the daemonsets to work on taint nodes
