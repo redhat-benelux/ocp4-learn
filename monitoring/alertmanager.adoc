@@ -1,0 +1,378 @@
+= Configuring Prometheus AlertManager
+Francesco Minafra <francesco.minafra@redhat.com>
+:revnumber: {lastcommitid}
+:revdate: {lastcommitdate}
+:data-uri:
+:toc: left
+:source-highlighter: rouge
+:icons: font
+:stylesdir: ../stylesheets
+:stylesheet: colony.css
+// :stylesheet: asciidoctor.css
+
+:sectnums:
+
+== Introduction
+
+To demonstrate with an example the way Prometheus AlertManager can be configured
+to send alerts to a notification system, we will use a chat application that is
+similar to Slack and that can be deployed on the same cluster where AlertManager
+is running.
+
+In this section we will:
+
+. Deploy https://rocket.chat/ backed by a https://github.com/sclorg/mongodb-container[MongoDB] database.
+. Configure Prometheus Alertmanager to send alerts in a channel of the deployed rocket.chat deployment.
+
+== Rocket.Chat
+
+=== Prerequisites
+
+* An OpenShift Container Platform 4.2 cluster has already been
+installed
+* A developer account is available for deploying the apps
+* An administrator account with cluster-admin privileges is available to configure
+AlertManager
+
+=== Deploy the apps
+
+. Login as `developer` user to the cluster
++
+[source%nowrap,sh]
+----
+$ oc whoami
+system:admin
+$ API_ENDPOINT=$(oc whoami --show-server)
+$ echo $API_ENDPOINT
+$ oc login -u developer $API_ENDPOINT
+----
++
+. Create a project (namespace) where to deploy MongoDB and Rocket.Chat
++
+[source%nowrap,sh]
+----
+$ oc new-project rocket-chat
+----
++
+. In order to function, Rocket.Chat needs a backing MongoDB database installed.
+We will deploy the application using the existing template called mongodb-persistent,
+which provides a MongoDB database service, with persistent storage. This template
+comes preinstalled on an OpenShift 4.2 cluster:
++
+[source%nowrap,sh]
+----
+$ oc new-app mongodb-persistent -p MONGODB_USER=rcadmin -p MONGODB_PASSWORD=rocketchat -p MONGODB_DATABASE=rocketchat -p VOLUME_CAPACITY=4Gi
+----
++
+. Wait until the MongoDB pod is fully initialized.
++
+[source%nowrap,sh]
+----
+$ oc get pods
+NAME               READY   STATUS      RESTARTS   AGE
+mongodb-1-deploy   0/1     Completed   0          2m4s
+mongodb-1-gjzw6    1/1     Running     0          111s
+----
++
+. Deploy the Rocket.Chat image from Docker Hub, connecting it to the MongoDB
+database that you just created, and expose the Rocket.Chat service as a route:
++
+[source%nowrap,sh]
+----
+$ oc new-app docker.io/rocketchat/rocket.chat:0.59.1 -e MONGO_URL=mongodb://rcadmin:rocketchat@mongodb:27017/rocketchat
+$ oc expose svc rocketchat
+----
++
+[NOTE]
+====
+We are explicitly using an older version of Rocket.Chat, since it simplifies the
+deployment (https://github.com/RocketChat/Rocket.Chat/pull/14227[doesn't require OPLOG])
+====
++
+. Once the Rocket.Chat pod is fully started and the service exposed as a route,
+disable the email validity check for new users (change the pod name according to
+  what you have in your environment)
++
+[source%nowrap,sh]
+----
+$ oc rsh mongodb-1-gjzw6
+sh-4.2$ mongo localhost:27017
+> use rocketchat
+> db.auth('rcadmin','rocketchat')
+> db.rocketchat_settings.update({_id:'Accounts_UseDNSDomainCheck'},{$set:{value:false}})
+> exit
+sh-4.2$ exit
+----
+
+=== Configure Rocket.Chat
+
+.Connect to the Rocket.Chat instance deployed on the cluster, and register a new account.
+
+. Determine the URL of your Rocket.Chat instance using the command: `oc get route rocketchat`
+. In a web browser, navigate to the Rocket.Chat URL
+. Under the blue *Login* button, select *Register a new account*
+. Enter your details (name, email address, and password)
+. Click *Register A New Account*
+. On the warning dialog, click *Yes*
+. When prompted to register the username, keep the suggested username or change
+it to one you prefer, and then click *Use this username*
+
+.Create a channel in Rocket.Chat
+
+We create a channel in Rocket.Chat so that Alertmanager has a destination for
+sending alerts.
+
+. Next to the *Search* box under your name, click *+*.
+. Type `openshift-alerts` as the channel name and click *Create*
+
+.Create Inbound Webhook
+
+We create then inbound webhook for the new channel to receive alerts from Alertmanager
+
+. Next to your username, click the three dots and select *Administration*
+. Select *Integrations* -> *New Integration* -> *Incoming WebHook*
+. Enter or select the following values:
+* Enabled: True
+* Name: OpenShift Alerts
+* Post to Channel: #openshift-alerts
+* Post as: rocket.cat
+* Alias: Prometheus
+* Script Enabled: True
+. Copy and paste the script below into the Script box:
++
+[source%nowrap,javascript]
+----
+class Script {
+  process_incoming_request({
+    request
+  }) {
+    var alertColor = "warning";
+    var alertKind  = "UNDEFINED";
+
+    if (request.content.status == "resolved") {
+      alertColor = "good";
+      alertKind  = "RESOLVED"
+    } else if (request.content.status == "firing") {
+      alertColor = "danger";
+      alertKind  = "PROBLEM"
+    }
+    console.log(request.content);
+
+    let finFields = [];
+    for (i = 0; i < request.content.alerts.length; i++) {
+      var endVal = request.content.alerts[i];
+      var elem = {
+        title: alertKind + ": " + endVal.labels.alertname,
+        value: "Instance: " + endVal.labels.instance + "; " + "Description: " + endVal.annotations.description + "; " + "Summary: " + endVal.annotations.summary,
+        short: false
+      };
+
+      finFields.push(elem);
+    }
+    return {
+      content: {
+        username: "Alertmanager",
+        attachments: [{
+          color: alertColor,
+          title_link: request.content.externalURL,
+          title: "Prometheus notification",
+          fields: finFields,
+        }]
+      }
+    };
+
+    return {
+      error: {
+        success: false,
+        message: 'Error accepting Web Hook'
+      }
+    };
+  }
+}
+----
++
+. Click Save Changes
+. Copy the webhook URL to use later in configuring Alertmanager
+* This field appears only after clicking Save Changes
+* It should look similar to:
++
+[source%nowrap,text]
+----
+http://rocketchat-rocket-chat.apps.ocp4cluster.example.com/hooks/yozbsYLP7GEDAsYRf/8xbtphm8M3q5Yh4DJcfH3pdKBd27wMBN9W65GHjZZjzG8jtL
+----
++
+. Next to Administration, click the X and return to the chat window
+. From a shell prompt, test that your webhook is working by sending an example
+JSON payload to Rocket.Chat, replacing <WEBHOOK_URL> with the URL you copied earlier
++
+[source%nowrap,sh]
+----
+curl -X POST -H 'Content-Type: application/json' --data '{"alerts": [{"status": "testing", "labels": {"alertname": "alert_test", "instance": "instance.my.test.cluster" },   "annotations": { "description": "Alert Test Description",      "summary": "Alert Test Summary" } }]}' <WEBHOOK_URL>
+----
+* Expect to receive an alert message in your Rocket.Chat channel.
+
+== Alertmanager
+
+We configure Alertmanager to publish alerts to Rocket.Chat using the webhook
+configured in the previous section.
+
+. Check that you are logged in as administrator on the cluster:
++
+[source%nowrap,sh]
+----
+$ oc login -u administrator $API_ENDPOINT
+----
++
+. Change to the `openshift-monitoring` project:
++
+[source%nowrap,sh]
+----
+$ oc project openshift-monitoring
+----
++
+. Run `oc get all` and find *Alertmanager* among the project resources
+* Expect to see three pods numbered from 0 to 2, which means that they are parts of a stateful set.
++
+[source%nowrap,sh]
+----
+$ oc get all
+NAME                                              READY   STATUS    RESTARTS   AGE
+pod/alertmanager-main-0                           3/3     Running   0          21h
+pod/alertmanager-main-1                           3/3     Running   0          21h
+pod/alertmanager-main-2                           3/3     Running   0          21h
+...
+NAME                                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+service/alertmanager-main             ClusterIP   172.30.50.77     <none>        9094/TCP                     27h
+service/alertmanager-operated         ClusterIP   None             <none>        9093/TCP,9094/TCP,9094/UDP   27h
+...
+NAME                                 READY   AGE
+statefulset.apps/alertmanager-main   3/3     27h
+...
+NAME                                         HOST/PORT                                                                PATH   SERVICES            PORT    TERMINATION          WILDCARD
+route.route.openshift.io/alertmanager-main   alertmanager-main-openshift-monitoring.apps.ocp4cluster.example.com             alertmanager-main   web     reencrypt/Redirect   None
+----
++
+. Decode the `alertmanager.yaml` configuration file and study the default configuration:
++
+[NOTE]
+====
+Alertmanager’s configuration is in the `alertmanager.yaml` configuration file,
+which is base64-encoded and stored in a secret called `alertmanager-main`. You
+can see the secret by running `oc get secret alertmanager-main`.
+====
++
+[source%nowrap,sh]
+----
+$ oc get secret alertmanager-main -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d
+----
++
+.Sample Output
+[source%nowrap,sh]
+----
+"global":
+  "resolve_timeout": "5m"
+"receivers":
+- "name": "null"
+"route":
+  "group_by":
+  - "job"
+  "group_interval": "5m"
+  "group_wait": "30s"
+  "receiver": "null"
+  "repeat_interval": "12h"
+  "routes":
+  - "match":
+      "alertname": "Watchdog"
+    "receiver": "null"
+----
++
+. Replace this configuration with your own, which includes your Rocket.Chat webhook:
+* In your favorite editor, create a file called `alertmanager.yaml` and enter the following:
++
+[source%nowrap,sh]
+----
+global:
+  # ResolveTimeout is the default value used by alertmanager if the alert does
+  # not include EndsAt, after this time passes it can declare the alert as resolved if it has not been updated.
+  # This has no impact on alerts from Prometheus, as they always include EndsAt.
+  resolve_timeout: '5m'
+
+# The root route on which each incoming alert enters.
+route:
+  # The root route must not have any matchers as it is the entry point for
+  # all alerts. It needs to have a receiver configured so alerts that do not
+  # match any of the sub-routes are sent to someone.
+  # The following is a default receiver
+  receiver: 'default-receiver'
+
+  # The labels by which incoming alerts are grouped together. For example,
+  # multiple alerts coming in for cluster=A and alertname=LatencyHigh would
+  # be batched into a single group.
+  group_by: ['alertname', 'cluster', 'job']
+
+  # When the first notification was sent, wait 'group_interval' to send a batch
+  # of new alerts that started firing for that group.
+  group_interval: 5m
+
+  # When a new group of alerts is created by an incoming alert, wait at
+  # least 'group_wait' to send the initial notification.
+  # This way ensures that you get multiple alerts for the same group that start
+  # firing shortly after another are batched together on the first
+  # notification.
+  group_wait: 30s
+
+  # If an alert has successfully been sent, wait 'repeat_interval' to
+  # resend them.
+  repeat_interval: 12h
+  #
+  # All the above attributes are inherited by all child routers and can be
+  # overwritten on each.
+  #
+  # The child route trees.
+  # All alerts that do not match the following child routes
+  # will remain at the root node and be dispatched to 'default-receiver'.
+  routes:
+  - match:
+      alertname: 'Watchdog'
+    repeat_interval: 5m
+    receiver: 'watchdog'
+
+# A list of notification receivers.
+receivers:
+  # https://prometheus.io/docs/operating/integrations/#alertmanager-webhook-receiver
+- name: 'default-receiver'
+  webhook_configs:
+    # Whether or not to notify about resolved alerts.
+  - send_resolved: true
+    # The endpoint to send HTTP POST requests to.
+    url: 'http://rocketchat-rocket-chat.apps.ocp4cluster.example.com/hooks/yozbsYLP7GEDAsYRf/8xbetphm8M3q5Yh4DJcfH3pdKBd27wMBN9W65GHjZZjzG8jtL'
+- name: 'watchdog'
+----
++
+[NOTE]
+====
+If you want to direct the Watchdog alerts to Rocket.Chat instead of
+an empty receiver, just change `receiver: 'default-receiver'` in the Watchdog route.
+====
++
+. Replace the default secret with your own:
++
+[source%nowrap,sh]
+----
+$ oc create secret generic alertmanager-main --from-file=alertmanager.yaml --dry-run -o yaml | oc replace -f -
+----
++
+. Restart the stateful set:
++
+[source%nowrap,sh]
+----
+$ oc patch statefulset alertmanager-main -p '{"spec":{"updateStrategy":{"type":"RollingUpdate"}}}'
+$ oc delete pod -l app=alertmanager
+----
++
+[NOTE]
+====
+If you want to use other notification mechanisms such as email, PagerDuty, or
+Slack, you need to update the configuration map with the correct configuration,
+as documented in the https://prometheus.io/docs/alerting/configuration[Prometheus configuration page].
+====
