@@ -1,0 +1,192 @@
+= Updating and upgrading your OCP4 cluster
+Francesco Minafra <francesco.minafra@redhat.com>
+:revnumber: {lastcommitid}
+:revdate: {lastcommitdate}
+:data-uri:
+:toc: left
+:source-highlighter: rouge
+:icons: font
+:stylesdir: ../stylesheets
+:stylesheet: colony.css
+// :stylesheet: asciidoctor.css
+
+:sectnums:
+
+== Introduction
+
+References:
+
+https://docs.openshift.com/container-platform/4.2/updating/updating-cluster-between-minor.html
+
+
+We will assume that the current version of the OpenShift Container Platform cluster
+is OCP 4.2.20 and we would like to upgrade it to the latest OCP 4.3 (latest -z
+  asyncronous update)
+
+Upgrading from one OCP minor version to another generally consists in two steps:
+
+. Update to a bugfix version of OCP 4.2 (-z asyncronous update) *for which there
+is an upgrade path* to one of the minor versions of OCP 4.3
+. Change the update channel and upgrade to the latest asyncronous update of OCP 4.3
+
+The above steps can be performed alternatively from the web console or from the command line interface
+
+[WARNING]
+====
+Reverting your cluster to a previous version, or a rollback, is not supported.
+Only upgrading to a newer version is supported.
+====
+
+Starting with OCP 4.2 each minor version of OpenShift Container Platform has
+three upgrade channels to choose from:
+
+* Candidate-4.x
+** not recommended for production environments
+** contain upgrades to versions that will eventually become generally available
+* Fast-4.x
+** recommended for pre-production environments
+** contain only upgrades to -z asyncronous versions within the same OCP minor version (4.x)
+** doesn't suggest upgrades to different minor versions
+** immediate availability of updates as soon as they are made GA
+* Stable-4.x
+** recommended for production environments
+** doesn't suggest upgrades to different minor versions
+** will contain updates on a time delay: For patch and CVE fixes this can range
+from several hours to a day and allows an extra period of assessment in how the
+software performs.
+
+[NOTE]
+====
+Upgrade channels have the peculiarity of suggesting upgrades to -z asyncronous
+bugfix versions that are still within the same minor version.
+For example, the candidate-4.2, fast-4.2 and stable-4.2 channels only suggest
+updates of the kind 4.2.z -> 4.2.z+n.
+If a cluster is at version 4.2.z, and the administrator subscribes it to one of
+the channels candidate-4.3, fast-4.3 and stable-4.3, then if and only if there
+are enabled upgrade paths from 4.2.z to any of the 4.3.z versions, the upgrade
+between OCP 4.2 to OCP 4.3 will be possible.
+====
+
+== Checking upgrade paths
+
+As described in the verified solution https://access.redhat.com/solutions/4606811,
+it is possible to discover the available upgrade paths from a specific OCP 4.x.z
+version using the script `ocp4upc.sh`, which can be downloaded from the github
+repository https://github.com/pamoedom/ocp4upc
+
+. From the bastion host, login as user with `cluster-admin` privileges
+. Confirm the general cluster status, no degraded or progressing operators, all pods running, all nodes ready, etc.
+. If the cluster status is OK, as expected, let's proceed to check which upgrade possibilities do we have
+from version 4.2.20:
++
+[source%nowrap,sh]
+----
+$ git clone https://github.com/pamoedom/ocp4upc.git
+$ cd ocp4upc
+$ sudo yum install bc curl graphviz
+$ ./ocp4upc.sh 4.2.20
+[INFO] Checking prerequisites... [OK]
+[INFO] Checking if '4.2.20' (amd64) is a valid release... [OK]
+[INFO] Result exported as 'stable-4.3.svg'
+[INFO] Result exported as 'fast-4.3.svg'
+----
+
+.Upgrade paths using fast-4.x channels
+image::images/fast-4.3.svg[]
+
+.Upgrade paths using stable-4.x channels
+image::images/stable-4.3.svg[]
+
+As can be seen from the above graphs, *as of today* (7 april 2020)
+*there are no available upgrade paths* to go from OCP 4.2.z to OCP 4.3.z
+
+== Upgrading using the web console
+
+The procedure for upgrading the cluster using the web console is pretty straightforward.
+
+OpenShift Container Platform has an update service that displays all valid updates
+and notifies the administrator in the web console of the available updates.
+
+In the following procedure we will assume that the cluster is currently at version
+4.2.20 and we want to upgrade it to one of the suggested versions *within the stable-4.x
+channels* as permitted by the OpenShift update service. Since the three available upgrade paths are:
+
+* 4.2.20 -> 4.2.21
+* 4.2.20 -> 4.2.25
+* 4.2.20 -> 4.2.26
+
+we will choose the first one and perform the upgrade.
+
+.*Update from 4.2.20 to 4.2.21*
+
+. Open the Web console and login as `kubeadmin` user or as one of the members of
+the group whose members have `cluster-admin` privileges.
+. Select `Administration` -> `Cluster Settings` -> `Overview`
+. The current version is 4.2.20 and the message "Update Available" appears on the screen
+. Keep the channel at `stable-4.2`
+. Click on the `Update now` link.
+. In the `Update Cluster` dialog, select as New Version `4.2.21`, and click on
+the `Update` button
+. Wait until the update completes, which means that all the Cluster Operators are
+with status `Available` and with version `4.2.21`
+
+== Upgrading using the command line
+
+In the following procedure we will assume that the cluster is currently at version
+4.2.21 and we want to upgrade it to one of the suggested versions *within the fast-4.x
+channels* as permitted by the OpenShift update service. Since the only available
+upgrade paths are:
+
+* 4.2.21 -> 4.2.25
+* 4.2.21 -> 4.2.26
+* 4.2.21 -> 4.2.27
+
+we will choose 4.2.26 as target version and perform the upgrade.
+
+.Procedure
+. Confirm cluster status (no degraded or progressing operators, all pods running, all nodes ready, etc):
++
+[source%nowrap,sh]
+----
+$ oc get clusterversion
+$ oc get clusteroperators
+$ oc get nodes
+$ oc get pods -A | grep -v "Running\|Completed"
+----
++
+. Change the cluster channel to `fast-4.2`
++
+[source%nowrap,sh]
+----
+$ oc patch clusterversion/version -p '{"spec":{"channel":"fast-4.2"}}' --type=merge
+----
++
+. View the available updates and note the version number of the update that you want to apply:
++
+[source%nowrap,sh]
+----
+$ oc adm upgrade
+Cluster version is 4.2.21
+
+Updates:
+
+VERSION IMAGE
+4.2.25  quay.io/openshift-release-dev/ocp-release@sha256:dfbe59ca5dcc017475a0e1c703f51750c1bde63f12c725fbe4b7a599e36eb725
+4.2.26  quay.io/openshift-release-dev/ocp-release@sha256:af0a6384e787c820279a0954c804d9c27b13458df2de366b3cd5ec3a7cdaa4b2
+4.2.27  quay.io/openshift-release-dev/ocp-release@sha256:26b501f5111add85989de9f02e368a0bfda8b43a54d0d56f4bf5916abada34da
+----
++
+. Perform the update
++
+[source%nowrap,sh]
+----
+$ oc adm upgrade --to=4.2.26
+----
++
+. Wait until the update completes. It is recommended to supervise the update from
+the CLI using the following command; this will give you a general cluster status every 10 seconds:
++
+[source%nowrap,sh]
+----
+$ watch -n10 "oc adm upgrade && oc get co && oc get nodes -o wide"
+----
