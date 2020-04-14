@@ -1,0 +1,542 @@
+= OCP4 Certificates Configuration
+Francesco Minafra <francesco.minafra@redhat.com>
+:revnumber: {lastcommitid}
+:revdate: {lastcommitdate}
+:data-uri:
+:toc: left
+:source-highlighter: rouge
+:icons: font
+:stylesdir: ../stylesheets
+:stylesheet: colony.css
+// :stylesheet: asciidoctor.css
+
+:sectnums:
+
+== Introduction
+
+In this section we would like to discuss how to manage certificates that are
+used to encrypt connections to the various components (both infrastructure and
+  applications) of an OpenShift 4 cluster.
+
+The official documentation provides the first source of information about this subject:
+
+* https://docs.openshift.com/container-platform/4.2/networking/routes/secured-routes.html[Secured routes: re-encrypt and edge]
+* https://docs.openshift.com/container-platform/4.2/authentication/certificates/replacing-default-ingress-certificate.html[Replacing the default ingress certificate]
+* https://docs.openshift.com/container-platform/4.2/authentication/certificates/api-server.html[Adding API server certificates]
+
+There are additional sources which provide more detailed descriptions on how to
+perform manually the configurations. One such reference is the blog post:
+
+* https://blog.openshift.com/requesting-and-installing-lets-encrypt-certificates-for-openshift-4/[Requesting and installing Let's Encrypt Certificates for OpenShift 4]
+
+We should separate certificate management discussion considering that:
+
+* A dedicated certificate is used for securing access to the API endpoint
+* A Wildcard domain certificate is used for securing access to routes that do not
+make use of dedicated application-specific certificates
+* Individual applications may use specific certificates different from the wildcard one
+* Normally the web console, the OAuth server and the dashboards for
+Monitoring/Logging make use of routes that are created by OpenShift using the
+wildcard DNS entry pointing to the ingress load balancer. These routes are then
+normally secured using the wildcard domain certificate assigned to the default
+ingress controller. Using dedicated certificates for the single components is
+currently not supported
+
+[CAUTION]
+====
+It may happen that the IT staff of the organization adopting OCP doesn't allow
+the creation of a wildcard certificate used to serve all the routes for
+applications that are not yet deployed. This may be considered a security issue,
+and therefore only the API certificate may be issued by the organization CA.
+This practice may lead to errors while authenticating to the API endpoint, because
+during the authentication also the OAuth server is involved. Normally the OAuth
+server makes use of the wildcard domain certificate assigned to the default ingress
+controller. Unless the OAuth server is also configured with a valid trusted
+certificate, users will get errors during the login to the API server.
+====
+
+== Assumptions
+
+In order to demonstrate with examples how to perform the certificate-related
+configurations, we will assume that:
+
+* A cluster installed with https://docs.openshift.com/container-platform/4.2/welcome/index.html[OCP 4.2] is available
+and the reader has `cluster-admin` access credentials.
+** Access to the cluster will be done using both a bastion host with the `oc` client
+binary installed and via the web console
+** For the purpose of our demonstration, an https://docs.openshift.com/container-platform/4.2/installing/installing_aws/installing-aws-default.html[OCP4 cluster installed on AWS] will be used
+* A sample application (an nginx web server) is deployed to demonstrate the
+per-application configuration of secure routes.
+* The availability of commercial *SSL* certificates is simulated using the freely
+available certificates issued by https://letsencrypt.org/[Let's Encrypt]
+
+== Deploy sample application
+
+We want to deploy a test application. Let's choose the
+https://access.redhat.com/containers/?tab=images#/registry.access.redhat.com/rhel8/nginx-116[Nginx]
+image available from Red Hat Container Catalog:
+
+. Let's first create a project to host this application deployment:
++
+[source%nowrap,sh]
+----
+$ oc new-project nginx-test
+----
++
+. Check which versions of nginx image(streams) are already available in the OpenShift
+integrated registry:
++
+[source%nowrap,sh]
+----
+$ oc get is -n openshift | grep nginx
+nginx           image-registry.openshift-image-registry.svc:5000/openshift/nginx    1.10,1.12,latest
+----
++
+. Deploy a simple static website using the source on github and the existing
+`nginx:1.12` imagestream as builder image:
++
+[source%nowrap,sh]
+----
+$ oc new-app nginx:1.12~https://github.com/sclorg/nginx-ex.git
+--> Found image fc13148 (5 months old) in image stream "openshift/nginx" under tag "1.12" for "nginx:1.12"
+
+    Nginx 1.12
+    ----------
+    Nginx is a web server and a reverse proxy server for HTTP, SMTP, POP3 and IMAP protocols,
+    with a strong focus on high concurrency, performance and low memory usage. The container
+    image provides a containerized packaging of the nginx 1.12 daemon. The image can be used
+    as a base image for other applications based on nginx 1.12 web server. Nginx server image
+    can be extended using source-to-image tool.
+
+    Tags: builder, nginx, rh-nginx112
+
+    * A source build using source code from https://github.com/sclorg/nginx-ex.git will be created
+      * The resulting image will be pushed to image stream tag "nginx-ex:latest"
+      * Use 'oc start-build' to trigger a new build
+    * This image will be deployed in deployment config "nginx-ex"
+    * Ports 8080/tcp, 8443/tcp will be load balanced by service "nginx-ex"
+      * Other containers can access this service through the hostname "nginx-ex"
+
+--> Creating resources ...
+    imagestream.image.openshift.io "nginx-ex" created
+    buildconfig.build.openshift.io "nginx-ex" created
+    deploymentconfig.apps.openshift.io "nginx-ex" created
+    service "nginx-ex" created
+--> Success
+    Build scheduled, use 'oc logs -f bc/nginx-ex' to track its progress.
+    Application is not exposed. You can expose services to the outside world by executing
+    one or more of the commands below:
+     'oc expose svc/nginx-ex'
+    Run 'oc status' to view your app.
+----
++
+. Check the build logs until the resulting image is successfully pushed to the
+internal registry:
++
+[source%nowrap,sh]
+----
+$ oc logs -f bc/nginx-ex
+...
+Successfully pushed image-registry.openshift-image-registry.svc:5000/nginx-test/nginx-ex@sha256:129597
+Push successful
+----
++
+. Check the pods in the project until the deployment is complete and the application
+pod is running:
++
+[source%nowrap,sh]
+----
+$ oc get pods
+NAME                READY   STATUS      RESTARTS   AGE
+nginx-ex-1-build    0/1     Completed   0          108s
+nginx-ex-1-deploy   0/1     Completed   0          42s
+nginx-ex-1-ksgvj    1/1     Running     0          34s
+----
++
+. Get info about the domain suffix that the ingress controller
+appends to the exposed application routes, also known as the
+*router canonical host name*:
++
+[source%nowrap,sh]
+----
+$ oc get ingress.config cluster -o yaml | grep domain
+  domain: apps.ocp4cluster.example.com
+----
++
+. Expose a route for the application using a custom host name:
++
+[source%nowrap,sh]
+----
+$ oc expose svc/nginx-ex --hostname website.apps.ocp4cluster.example.com
+  route.route.openshift.io/nginx-ex exposed
+----
++
+. Notice that the service for our example application is listening on both port
+8080-tcp (http) and 8443-tcp (https).
++
+[source%nowrap,sh]
+----
+$ oc get service nginx-ex -o yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    openshift.io/generated-by: OpenShiftNewApp
+  creationTimestamp: "2020-04-04T15:24:06Z"
+  labels:
+    app: nginx-ex
+  name: nginx-ex
+  namespace: nginx-test
+  resourceVersion: "4448474"
+  selfLink: /api/v1/namespaces/nginx-test/services/nginx-ex
+  uid: 52871cc2-7688-11ea-882b-0299395f75b4
+spec:
+  clusterIP: 172.30.219.132
+  ports:
+  - name: 8080-tcp
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  - name: 8443-tcp
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app: nginx-ex
+    deploymentconfig: nginx-ex
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}
+----
++
+. Notice that the route created with the expose command is listening only on port
+80-tcp, because the target port is 8080-tcp on the service side.
++
+[NOTE]
+====
+Get more info about the `route` resource with the command: `oc explain route.spec.port`
+====
++
+[source%nowrap,sh]
+----
+$ oc get route nginx-ex -o yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  creationTimestamp: "2020-04-04T15:30:35Z"
+  labels:
+    app: nginx-ex
+  name: nginx-ex
+  namespace: nginx-test
+  resourceVersion: "4451194"
+  selfLink: /apis/route.openshift.io/v1/namespaces/nginx-test/routes/nginx-ex
+  uid: 3a6c5102-7689-11ea-8459-0a580a800024
+spec:
+  host: website.apps.ocp4cluster.example.com
+  port:
+    targetPort: 8080-tcp
+  subdomain: ""
+  to:
+    kind: Service
+    name: nginx-ex
+    weight: 100
+  wildcardPolicy: None
+status:
+  ingress:
+  - conditions:
+    - lastTransitionTime: "2020-04-04T15:30:35Z"
+      status: "True"
+      type: Admitted
+    host: website.apps.ocp4cluster.example.com
+    routerCanonicalHostname: apps.ocp4cluster.example.com
+    routerName: default
+    wildcardPolicy: None
+----
++
+. Check that the route is actually working:
++
+[source%nowrap,sh]
+----
+$ curl --head website.apps.ocp4cluster.example.com
+HTTP/1.1 200 OK
+Server: nginx/1.12.1
+Date: Sat, 04 Apr 2020 15:31:07 GMT
+Content-Type: text/html
+Content-Length: 37451
+Last-Modified: Sat, 04 Apr 2020 15:24:58 GMT
+ETag: "5e88a6ca-924b"
+Accept-Ranges: bytes
+Set-Cookie: 412d7c10008752e4b9932459e3e64d55=92df654ecafe8ab745d16c244970e652; path=/; HttpOnly
+Cache-control: private
+----
+
+== Secured edge route
+
+Let's create an https://docs.openshift.com/container-platform/4.2/networking/routes/secured-routes.html[edge route]
+for the application deployed in the previous section using a custom certificate.
+
+In most organizations the custom certificate is either provided by an internal
+trusted certification authority or purchased via a commercial certification
+authority that verifies the identity of the requester.
+
+In our case we will use certificates issued for free by https://letsencrypt.org/[Let's Encrypt].
+These certificates are short-lived but trusted by most modern web browsers.
+
+=== Requesting the certificate
+
+Following the instructions in this https://blog.openshift.com/requesting-and-installing-lets-encrypt-certificates-for-openshift-4/[Red Hat blog post]
+we will request a certificate for the hostname that we assigned to the exposed route
+of the sample application already deployed as described above.
+
+[NOTE]
+====
+The steps that follow assume that the OpenShift 4 cluster is deployed on AWS.
+Similar steps should be followed if using another cloud provider or virtualization
+platform.
+====
+
+. From the bastion host, clone the acme.sh GitHub repository
++
+[source%nowrap,sh]
+----
+$ cd $HOME
+$ git clone https://github.com/neilpang/acme.sh
+$ cd acme.sh
+----
++
+. Update the file `$HOME/acme.sh/dnsapi/dns_aws.sh` with your AWS access credentials.
+. Define a variable for the hostname that will have the certificate issued. In our
+case this will be the hostname choosen for the exported route of the example application
+deployed earlier:
++
+[source%nowrap,sh]
+----
+$ export WEB_HOSTNAME=website.apps.ocp4cluster.example.com
+----
++
+. Run the `acme.sh` script
++
+[source%nowrap,sh]
+----
+$ ${HOME}/acme.sh/acme.sh --issue -d ${WEB_HOSTNAME} --dns dns_aws
+----
++
+. It is usually a good idea to move the certificates from the *acme.sh* default
+path to a well known directory. So use the `--install-cert` option of the `acme.sh`
+script to copy the certificates to `$HOME/web-certificates`.
++
+[source%nowrap,sh]
+----
+$ export CERTDIR=$HOME/web-certificates
+$ mkdir -p ${CERTDIR}
+$ ${HOME}/acme.sh/acme.sh --install-cert -d ${WEB_HOSTNAME} --cert-file ${CERTDIR}/cert.pem --key-file ${CERTDIR}/key.pem --fullchain-file ${CERTDIR}/fullchain.pem --ca-file ${CERTDIR}/ca.cer
+----
+
+=== Installing the certificate
+
+We have previously exposed the service for the web app using a route that is not
+secured by any encryption. Let's delete that route and recreate it using the
+just generated certificate:
+
+[source%nowrap,sh]
+----
+$ oc get route
+NAME     HOST/PORT                            PATH   SERVICES   PORT       TERMINATION   WILDCARD
+nginx-ex website.apps.ocp4cluster.example.com        nginx-ex   8080-tcp                 None
+
+$ oc delete route nginx-ex
+route.route.openshift.io "nginx-ex" deleted
+
+$ oc create route edge --service=nginx-ex --cert=${CERTDIR}/cert.pem --key=${CERTDIR}/key.pem --ca-cert=${CERTDIR}/ca.cer --hostname=website.apps.ocp4cluster.example.com
+route.route.openshift.io/nginx-ex created
+
+$ oc get route
+NAME     HOST/PORT                            PATH   SERVICES   PORT       TERMINATION   WILDCARD
+nginx-ex website.apps.ocp4cluster.example.com        nginx-ex   8080-tcp   edge          None
+
+
+$ curl --head https://website.apps.ocp4cluster.example.com
+HTTP/1.1 200 OK
+Server: nginx/1.12.1
+Date: Sun, 05 Apr 2020 09:38:02 GMT
+Content-Type: text/html
+Content-Length: 37451
+Last-Modified: Sat, 04 Apr 2020 15:24:58 GMT
+ETag: "5e88a6ca-924b"
+Accept-Ranges: bytes
+Set-Cookie: 412d7c10008752e4b9932459e3e64d55=92df654ecafe8ab745d16c244970e652; path=/; HttpOnly; Secure
+Cache-control: private
+----
+
+== API/Wildcard certificates
+
+These can be installed following step by step the instructions in the blog post
+from Wolfgang Kulhanek: https://blog.openshift.com/requesting-and-installing-lets-encrypt-certificates-for-openshift-4/
+
+Initially we notice how accessing the console happens over a secure connection.
+The certificate used for this connection is however untrusted and produces an
+error when we try to access it with the `curl` client:
+
+[source%nowrap,sh]
+----
+$ oc whoami --show-console
+https://console-openshift-console.apps.ocp4cluster.example.com
+
+$ curl --head https://console-openshift-console.apps.ocp4cluster.example.com
+curl: (60) Peer's certificate issuer has been marked as not trusted by the user.
+More details here: http://curl.haxx.se/docs/sslcerts.html
+
+curl performs SSL certificate verification by default, using a "bundle"
+ of Certificate Authority (CA) public keys (CA certs). If the default
+ bundle file isn't adequate, you can specify an alternate file
+ using the --cacert option.
+If this HTTPS server uses a certificate signed by a CA represented in
+ the bundle, the certificate verification probably failed due to a
+ problem with the certificate (it might be expired, or the name might
+ not match the domain name in the URL).
+If you'd like to turn off curl's verification of the certificate, use
+ the -k (or --insecure) option.
+----
+
+=== Certificate for the API endpoint
+
+Reference:
+
+https://docs.openshift.com/container-platform/4.2/authentication/certificates/api-server.html
+
+. Define a variable for the hostname that will have the certificate issued:
++
+[source%nowrap,sh]
+----
+$ export API_HOSTNAME=$(oc whoami --show-server | cut -f 2 -d ':' | cut -f 3 -d '/')
+$ echo $API_HOSTNAME
+----
++
+. If not already done, update the file `$HOME/acme.sh/dnsapi/dns_aws.sh` with your
+AWS access credentials.
+. Run the `acme.sh` script
++
+[source%nowrap,sh]
+----
+$ ${HOME}/acme.sh/acme.sh --issue -d ${API_HOSTNAME} --dns dns_aws
+----
++
+. Move the certificates from the *acme.sh* default path to a well known directory:
++
+[source%nowrap,sh]
+----
+$ export API_CERTDIR=$HOME/api-certificates
+$ mkdir -p ${API_CERTDIR}
+$ ${HOME}/acme.sh/acme.sh --install-cert -d ${API_HOSTNAME} --cert-file ${API_CERTDIR}/cert.pem --key-file ${API_CERTDIR}/key.pem --fullchain-file ${API_CERTDIR}/fullchain.pem --ca-file ${API_CERTDIR}/ca.cer
+----
++
+. Create a secret that contains the certificate and key in the `openshift-config` namespace.
++
+[source%nowrap,sh]
+----
+$ oc create secret tls -n openshift-config api-certs --cert=${API_CERTDIR}/fullchain.pem --key=${API_CERTDIR}/key.pem
+----
++
+. Update the API server to reference the created secret.
++
+[source%nowrap,bash]
+----
+$ oc patch apiserver cluster --type=merge --patch='{"spec": {"servingCerts": {"namedCertificates": [{"names": [" '$API_HOSTNAME' "], "servingCertificate": {"name": "api-certs"}}]}}}'
+----
++
+. Check the progress until the `kube-apiserver` operator finishes updating
++
+[source%nowrap,sh]
+----
+$ oc get clusteroperators | grep kube-apiserver
+kube-apiserver                             4.2.20    True        False          False      8d
+----
++
+. Notice that if we try to login to the API endpoint without using the existing
+`kubeconfig` file (that embeds an X.509 client certificate that never expires),
+we get errors:
++
+[source%nowrap,sh]
+----
+$ oc login -u kubeadmin https://api.ocp4cluster.example.com:6443
+error: x509: certificate signed by unknown authority
+
+$ oc login -u kubeadmin https://api.ocp4cluster.example.com:6443 --certificate-authority=${API_CERTDIR}/ca.cer
+error: x509: certificate signed by unknown authority
+----
++
+. The previous errors appear because during a login operation:
+.. Two different hosts are reached: API and OAuth
+.. The parameter `--certificate-authority` is only used to validate the API
+connections, so the Authentication URL must be validated using the CA bundle in
+the system.
+.. See this support ticket: https://access.redhat.com/support/cases/#/case/02596371
+.. See this KB article: https://access.redhat.com/solutions/4878721
+. Currently it is not possible to change only the OAuth certificate, without also
+changing the wildcard certificate used by the ingress controller. See the
+following RFE support ticket: https://access.redhat.com/support/cases/#/case/02601530
+
+[NOTE]
+====
+To demonstrate the fact that *oauth-openshift* intervenes in the process of
+login to the API console, we may do intentionally a mistake and install
+a certificate issued for `apps.ocp4cluster.example.com` instead of
+`*.apps.ocp4cluster.example.com` when updating the certificate for the ingress
+controller (see the following section).
+
+In that case we have the following error when trying to login:
+
+[source%nowrap,sh]
+----
+$ oc login -u kubeadmin https://api.ocp4cluster.example.com:6443
+error: x509: certificate is valid for apps.ocp4cluster.example.com, not oauth-openshift.apps.ocp4cluster.example.com
+----
+====
+
+=== Certificate for the Ingress controller
+
+Reference:
+
+https://docs.openshift.com/container-platform/4.2/authentication/certificates/replacing-default-ingress-certificate.html
+
+. Define a variable for the hostname that will have the certificate issued:
++
+[source%nowrap,sh]
+----
+$ export WILDCARD_HOSTNAME=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.domain}')
+$ echo $WILDCARD_HOSTNAME
+----
++
+. If not already done, update the file `$HOME/acme.sh/dnsapi/dns_aws.sh` with your
+AWS access credentials.
+. Run the `acme.sh` script
++
+[source%nowrap,sh]
+----
+$ ${HOME}/acme.sh/acme.sh --issue -d *.${WILDCARD_HOSTNAME} --dns dns_aws
+----
++
+. Move the certificates from the *acme.sh* default path to a well known directory.
++
+[source%nowrap,sh]
+----
+$ export WILDCARD_CERTDIR=$HOME/ingress-certificates
+$ mkdir -p ${WILDCARD_CERTDIR}
+$ ${HOME}/acme.sh/acme.sh --install-cert -d *.${WILDCARD_HOSTNAME} --cert-file ${WILDCARD_CERTDIR}/cert.pem --key-file ${WILDCARD_CERTDIR}/key.pem --fullchain-file ${WILDCARD_CERTDIR}/fullchain.pem --ca-file ${WILDCARD_CERTDIR}/ca.cer
+----
++
+. Create a secret that contains the certificate and key in the `openshift-ingress` namespace.
++
+[source%nowrap,sh]
+----
+$ oc create secret tls -n openshift-ingress router-certs --cert=${WILDCARD_CERTDIR}/fullchain.pem --key=${WILDCARD_CERTDIR}/key.pem
+----
++
+. Update the Custom Resource for the router to reference the created secret.
++
+[source%nowrap,sh]
+----
+$ oc patch ingresscontroller default -n openshift-ingress-operator --type=merge --patch='{"spec": {"defaultCertificate": {"name": "router-certs" }}}'
+----
