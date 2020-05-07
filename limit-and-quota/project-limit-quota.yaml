@@ -1,0 +1,202 @@
+apiVersion: v1
+kind: Template
+metadata:
+  creationTimestamp: null
+  name: project-limit-quota
+objects:
+- apiVersion: v1
+  kind: ResourceQuota
+  metadata:
+    name: compute-resources
+    namespace: ${PROJECT_NAME}
+  spec:
+    hard:
+      pods: ${QUOTA_PODS}
+      requests.cpu: ${QUOTA_REQUEST_CPU}
+      requests.memory: ${QUOTA_REQUEST_MEMORY}
+      limits.cpu: ${QUOTA_LIMIT_CPU}
+      limits.memory: ${QUOTA_LIMIT_MEMORY}
+- apiVersion: v1
+  kind: ResourceQuota
+  metadata:
+    name: core-object-counts
+    namespace: ${PROJECT_NAME}
+  spec:
+    hard:
+      configmaps: ${QUOTA_CONFIGMAPS}
+      persistentvolumeclaims: ${QUOTA_PVCS}
+      replicationcontrollers: ${QUOTA_RC}
+      secrets: ${QUOTA_SECRETS}
+      services: ${QUOTA_SERVICES}
+      services.loadbalancers: ${QUOTA_SERVICES_LOADBALANCERS}
+- apiVersion: v1
+  kind: ResourceQuota
+  metadata:
+    name: storage-consumption
+    namespace: ${PROJECT_NAME}
+  spec:
+    hard:
+      persistentvolumeclaims: ${QUOTA_PVCS}
+      requests.storage: ${QUOTA_STORAGE}
+      gold.storageclass.storage.k8s.io/requests.storage: "0"
+      gold.storageclass.storage.k8s.io/persistentvolumeclaims: "0"
+      silver.storageclass.storage.k8s.io/requests.storage: "0"
+      silver.storageclass.storage.k8s.io/persistentvolumeclaims: "0"
+      bronze.storageclass.storage.k8s.io/requests.storage: "0"
+      bronze.storageclass.storage.k8s.io/persistentvolumeclaims: "0"
+- apiVersion: v1
+  kind: LimitRange
+  metadata:
+    name: core-resource-limits
+    namespace: ${PROJECT_NAME}
+  spec:
+    limits:
+      - type: "Pod"
+        max:
+          cpu: ${LIMIT_POD_MAX_CPU}
+          memory: ${LIMIT_POD_MAX_MEMORY}
+        min:
+          cpu: ${LIMIT_POD_MIN_CPU}
+          memory: ${LIMIT_POD_MIN_MEMORY}
+      - type: "Container"
+        max:
+          cpu: ${LIMIT_CONTAINER_MAX_CPU}
+          memory: ${LIMIT_CONTAINER_MAX_MEMORY}
+        min:
+          cpu: ${LIMIT_CONTAINER_MIN_CPU}
+          memory: ${LIMIT_CONTAINER_MIN_MEMORY}
+        default:
+          cpu: ${LIMIT_CONTAINER_DEF_CPU}
+          memory: ${LIMIT_CONTAINER_DEF_MEMORY}
+        defaultRequest:
+          cpu: ${LIMIT_CONTAINER_REQUEST_CPU}
+          memory: ${LIMIT_CONTAINER_REQUEST_MEMORY}
+        maxLimitRequestRatio:
+          cpu: ${LIMIT_CONTAINER_RATIO_CPU}
+- apiVersion: v1
+  kind: LimitRange
+  metadata:
+    name: image-limits
+    namespace: ${PROJECT_NAME}
+  spec:
+    limits:
+      - type: openshift.io/Image
+        max:
+          storage: ${LIMIT_IMG_MAX_STORAGE}
+      - type: openshift.io/ImageStream
+        max:
+          openshift.io/image-tags: ${LIMIT_IMG_MAX_TAG}
+          openshift.io/images: ${LIMIT_IMG_MAX_IMG}
+- apiVersion: v1
+  kind: LimitRange
+  metadata:
+    name: pvc-limit
+    namespace: ${PROJECT_NAME}
+  spec:
+    limits:
+      - type: PersistentVolumeClaim
+        min:
+          storage: ${LIMIT_PVC_MIN_STORAGE}
+        max:
+          storage: ${LIMIT_PVC_MAX_STORAGE}
+        default:
+          storage: ${LIMIT_PVC_MIN_STORAGE}
+        defaultRequest:
+          storage: ${LIMIT_PVC_MIN_STORAGE}
+parameters:
+- name: PROJECT_NAME
+  description: name of the project aka namespace
+  required: true
+- name: LIMIT_POD_MAX_MEMORY
+  description: The maximum amount of memory that a pod can request on a node across all containers.
+  value: "1Gi"
+- name: LIMIT_CONTAINER_DEF_CPU
+  description: The default amount of CPU that a container will be limited to use if not specified.
+  value: "300m"
+- name: LIMIT_CONTAINER_MAX_CPU
+  description: The maximum amount of CPU that a single container in a pod can request.
+  value: "2000m"
+- name: LIMIT_POD_MIN_MEMORY
+  description: The minimum amount of memory that a pod can request on a node across all containers.
+  value: "6Mi"
+- name: LIMIT_CONTAINER_MIN_MEMORY
+  description: The minimum amount of memory that a single container in a pod can request
+  value: "4Mi"
+- name: LIMIT_CONTAINER_MAX_MEMORY
+  description: The maximum amount of memory that a single container in a pod can request.
+  value: "1Gi"
+- name: LIMIT_CONTAINER_REQUEST_CPU
+  decription: The default amount of CPU that a container will request to use if not specified.
+  value: "200m"
+- name: LIMIT_CONTAINER_REQUEST_MEMORY
+  description: The default amount of memory that a container will request to use if not specified.
+  value: "100Mi"
+- name: LIMIT_CONTAINER_DEF_MEMORY
+  description: The default amount of memory that a container will be limited to use if not specified.
+  value: "256Mi"
+- name: LIMIT_POD_MAX_CPU
+  description: The maximum amount of CPU that a pod can request on a node across all containers.
+  value: "2000m"
+- name: LIMIT_CONTAINER_RATIO_CPU
+  description: The maximum amount of CPU burst that a container can make as a ratio of its limit over request.
+  value: "10"
+- name: LIMIT_CONTAINER_MIN_CPU
+  description: The minimum amount of CPU that a single container in a pod can request.
+  value: "100m"
+- name: LIMIT_POD_MIN_CPU
+  description: The minimum amount of CPU that a pod can request on a node across all containers.
+  value: "200m"
+- name: LIMIT_IMG_MAX_TAG
+  description: The maximum number of unique image tags per image streams spec.
+  value: "20"
+- name: LIMIT_IMG_MAX_IMG
+  description: The maximum number of unique image references per image streams status.
+  value: "30"
+- name: LIMIT_IMG_MAX_STORAGE
+  description: The maximum size of an image that can be pushed to an internal registry.
+  value: "1Gi"
+- name: LIMIT_PVC_MIN_STORAGE
+  description: The minimum amount of storage that can be requested in a persistent volume claim
+  value: "1Gi"
+- name: LIMIT_PVC_MAX_STORAGE
+  description: The maximum amount of storage that can be requested in a persistent volume claim
+  value: "50Gi"
+- name: QUOTA_SERVICES
+  description: The total number of services that can exist in the project.
+  value: "10"
+- name: QUOTA_SERVICES_LOADBALANCERS
+  description: The total number of services loadbalancers that can exist in the project
+  value: "2"
+- name: QUOTA_STREAMS
+  description: The total number of image streams that can exist in the project.
+  value: "10"
+- name: QUOTA_RC
+  description: The total number of replication controllers that can exist in the project.
+  value: "20"
+- name: QUOTA_PVCS
+  description: The total number of persistent volume claims (PVCs) that can exist in the project. 
+  value: "4"
+- name: QUOTA_CONFIGMAPS
+  description: The total number of ConfigMap objects that can exist in the project.
+  value: "10"
+- name: QUOTA_SECRETS
+  description: The total number of secrets that can exist in the project.
+  value: "10"
+- name: QUOTA_STORAGE
+  description: Across all persistent volume claims in a project, the sum of storage requested
+  value: "50Gi"
+- name: QUOTA_PODS
+  description: The total number of pods in a non-terminal state.
+  value: "4"
+- name: QUOTA_REQUEST_CPU
+  description: Across all pods in a non-terminal state, the sum of CPU requests
+  value: "1000m"
+- name: QUOTA_LIMIT_CPU
+  description: Across all pods in a non-terminal state, the sum of CPU limits
+  value: "2000m"
+- name: QUOTA_REQUEST_MEMORY
+  description: Across all pods in a non-terminal state, the sum of memory requests 
+  value: "1Gi"
+- name: QUOTA_LIMIT_MEMORY
+  description: Across all pods in a non-terminal state, the sum of memory limits
+  value: "2Gi"
