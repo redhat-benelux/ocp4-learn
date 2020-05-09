@@ -8,3 +8,36 @@ A master template which can be modified via parameters.
 
 This section is still WIP.
 
+
+== Apply to specific project
+
+Create a specific project 'beperking' or select an existing project.
+
+.create a project
+[source,bash]
+----
+oc new-project beperking
+----
+
+
+
+[source,bash]
+----
+oc process -f project-limit-quota.yaml -p PROJECT_NAME=beperking | oc apply -f -
+----
+
+Via the CLI you can get an overview
+
+.describe quota
+[source,bash]
+----
+oc describe quota
+----
+
+.describe limits
+[source,bash]
+----
+oc describe limits
+----
+
+
