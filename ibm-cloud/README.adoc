@@ -1,0 +1,22 @@
+ic login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p Welcome007 -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+
+-c value : Account ID or owner user ID (e.g. user@example.com), this is the "RH demo" account ID which IBM granted us
+
+-g value : Resource Group Name or ID, IBM created for us
+
+
+ic catalog entry openshift
+
+ic catalog service openshift
+
+export DataCenterZone=ams03
+
+
+ic sl vlan list -d $DataCenterZone
+
+export PublicVlanId=$(ic sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id")
+
+export PrivateVlanId=$(ic sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
+
+ic oc cluster create classic --name my_openshift --location $DataCenterZone --version 4.3_openshift --flavor b3c.4x16.encrypted  --workers 3 --public-vlan $PublicVlanId --private-vlan $PrivateVlanId --public-service-endpoint
+
