@@ -1,7 +1,7 @@
 export DataCenterZone=ams03
 export ClusterName="my_openshift"
 
-ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p Welcome007 -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
 
 export PublicVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id")
 
