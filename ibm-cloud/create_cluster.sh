@@ -6,7 +6,7 @@ sed -e 's/\(.*\)/\L\1/' <<< "$ClusterName"
 
 
 
-# ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+# ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxxxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
 
 export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
 
@@ -62,7 +62,7 @@ sed -e 's/^"//' -e 's/"$//' <<<"$COSServiceId"
 
 echo "COSServiceId=$COSServiceId"
 # Creating credentials for IBM object storage service
-ibmcloud resource service-key-create "$ClusterName"_creds Writer --instance-name "$ClusterName"-cos
+ibmcloud resource service-key-create "$ClusterName"-creds Writer --instance-name "$ClusterName"-cos
 
 export CredServiceKeyId=$(ibmcloud resource service-key "$ClusterName"-creds --output json | jq '.[]'|  jq .'crn')
 export CredAPIKey=$(ibmcloud resource service-key "$ClusterName"-creds  --output json | jq '.[]'|  jq .'credentials.apikey')
