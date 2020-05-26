@@ -1,4 +1,4 @@
-ic login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p Welcome007 -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+ic login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
 
 -c value : Account ID or owner user ID (e.g. user@example.com), this is the "RH demo" account ID which IBM granted us
 

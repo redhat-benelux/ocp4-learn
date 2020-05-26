@@ -6,7 +6,7 @@ sed -e 's/\(.*\)/\L\1/' <<< "$ClusterName"
 
 
 
-# ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxxxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+# ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
 
 export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
 
