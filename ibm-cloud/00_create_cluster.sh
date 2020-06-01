@@ -1,35 +1,38 @@
+# to get available zones 
+# ibmcloud oc zone ls --provider classic
 export DataCenterZone=ams03
-export ClusterName="my-openshift"
+export ClusterName="myopenshift"
 
 # Ensure cluster name is lower case and no _,as it makes some issues to s3
-sed -e 's/\(.*\)/\L\1/' <<< "$ClusterName"
+ClusterName=$(sed -e 's/\(.*\)/\L\1/' <<< "$ClusterName")
+echo "ClusterName is ${ClusterName}"
 
 
 
 # ibmcloud login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxxxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
 
-export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
-
+export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id"| head -n1)
 echo "private is ${PrivateVlanId}"
+
 if [ "${PrivateVlanId}" == "" ]; then
   # Create VPC for deployment
   echo "Createing Private VPC"
   ibmcloud sl vlan create -t private -d $DataCenterZone -f
+  export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id"| head -n1)
 fi
 
-export PrivateVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
 
-
-export PublicVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id")
- 
+export PublicVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id"| head -n1)
 echo "public is ${PublicVlanId}"
+
 if [ "${PublicVlanId}" == "" ]; then
   # Create VPC for deployment
   echo "Createing Public VPC"
   ibmcloud sl vlan create -t public -d $DataCenterZone -f
+  export PublicVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id"| head -n1)
 fi
 
-export PublicVlanId=$(ibmcloud sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id")
+
 
 if [[ -z "${PrivateVlanId}" ]] || [[ -z "${PublicVlanId}" ]]; then
   echo "can not create cluster as vlan creation failed" >&2
@@ -57,7 +60,7 @@ ibmcloud resource service-instance-create "$ClusterName"-cos cloud-object-storag
 
 export COSServiceId=$(ibmcloud resource service-instance "$ClusterName"-cos --output json | jq '.[]'|  jq .'crn')
 
-sed -e 's/^"//' -e 's/"$//' <<<"$COSServiceId"
+COSServiceId=$(sed -e 's/^"//' -e 's/"$//' <<<"$COSServiceId")
 
 
 echo "COSServiceId=$COSServiceId"
@@ -76,6 +79,9 @@ echo "BucketName=$BucketName"
 
 ibmcloud cos config auth --method IAM
 ibmcloud cos create-bucket --bucket "$BucketName" --ibm-service-instance-id $COSServiceId --region eu-de
+
+#Switch kubeconfig context
+ibmcloud oc cluster config --cluster $ClusterName --admin
 
 #ibmcloud ks kms
 

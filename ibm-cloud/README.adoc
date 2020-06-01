@@ -1,22 +1,29 @@
-ic login -a https://api.eu-de.bluemix.net -r eu-de -u rahmed@redhat.com -p xxx -c 63cf37b8c3bb448cbf9b7507cc8ca57d -g benelux
+:data-uri:
+:toc: left
+:markup-in-source: +verbatim,+quotes,+specialcharacters
+:source-highlighter: rouge
+:icons: font
+:stylesdir: stylesheets
+:stylesheet: colony.css
 
--c value : Account ID or owner user ID (e.g. user@example.com), this is the "RH demo" account ID which IBM granted us
+= IBM Cloud, The OpenShift way
+The idea of this series is to understand the IBM Cloud echo system with respect to OpenShift
 
--g value : Resource Group Name or ID, IBM created for us
+:sectnums:
+
+== Deploy OCP to IBMCloud
+
+Bash script to deply OCP on IBM cloud (WIP convert it to ansible using https://github.com/IBM-Cloud/ansible-collection-ibm Looks pretty basic to me but maybe some help from IBM).
+link:gitops/00_create_cluster.sh[]
+link:gitops/01_delete_cluster.sh[]
+
+== Manage API Objects, using Kustomize
+
+Explaining How to deploy ArgoCD Operator using Kubernetes Kustomize and kustomization file.
+The use of Kustomize is mainly for educational purpose and to see how to utilize it for Declarative Management of Kubernetes Objects,
+indeed it is easier to use OpenShift Console UI to deploy the ArgoCD operator.
+
+link:gitops/argocd-operator[]
 
 
-ic catalog entry openshift
-
-ic catalog service openshift
-
-export DataCenterZone=ams03
-
-
-ic sl vlan list -d $DataCenterZone
-
-export PublicVlanId=$(ic sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PUBLIC")' | jq ."id")
-
-export PrivateVlanId=$(ic sl vlan list -d $DataCenterZone --output json | jq '.[] | select(.networkSpace=="PRIVATE")' | jq ."id")
-
-ic oc cluster create classic --name my_openshift --location $DataCenterZone --version 4.3_openshift --flavor b3c.4x16.encrypted  --workers 3 --public-vlan $PublicVlanId --private-vlan $PrivateVlanId --public-service-endpoint
 
