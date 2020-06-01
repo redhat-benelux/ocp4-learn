@@ -14,8 +14,9 @@ The idea of this series is to understand the IBM Cloud echo system with respect 
 == Deploy OCP to IBMCloud
 
 Bash script to deply OCP on IBM cloud (WIP convert it to ansible using https://github.com/IBM-Cloud/ansible-collection-ibm Looks pretty basic to me but maybe some help from IBM).
-link:gitops/00_create_cluster.sh[]
-link:gitops/01_delete_cluster.sh[]
+
+* link:gitops/00_create_cluster.sh[]
+* link:gitops/01_delete_cluster.sh[]
 
 == Manage API Objects, using Kustomize
 
@@ -24,6 +25,3 @@ The use of Kustomize is mainly for educational purpose and to see how to utilize
 indeed it is easier to use OpenShift Console UI to deploy the ArgoCD operator.
 
 link:gitops/argocd-operator[]
-
-
-
