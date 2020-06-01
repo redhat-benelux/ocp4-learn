@@ -41,7 +41,7 @@ vars:
 +
 . folder Structure
 +
-image::../../images/folder.png[]
+image::../../images/folder.png[width=300,height=380]
 +
 * base
 A base is main folder where you put your main kustomization file, in our case we include the all resources in this file.
