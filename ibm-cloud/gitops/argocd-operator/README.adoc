@@ -44,8 +44,10 @@ vars:
 image::../../images/folder.png[width=300,height=380]
 +
 * base
++
 A base is main folder where you put your main kustomization file, in our case we include the all resources in this file.
 * overlay
++
 An overlay is a kustomization that depends on another kustomization (normally the base).
 So you will need a separate overlay for every specific targeted configuration, imagine the case where you will have a dev, prod, etc.
 or in our case we have aws, and ibmcloud.
