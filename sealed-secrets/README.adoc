@@ -14,7 +14,7 @@ Sealed Secrets is composed of two parts:
 * A client-side utility: kubeseal
 
 == Installation
-I'm using a bash script to download the controller file, then using kustomize i remove the security context (it uses root). Then it download kubeseal utility
+I'm using a bash script to download the controller file, then using kustomize i modify some security context attributes. Then it download kubeseal utility
 
 
 [source,bash]
@@ -74,7 +74,7 @@ it cannot be moved in another namespace and decrypted there.
 [NOTE]
 ====
 By default kubeseal will use current current context configured in ~/.kube/config. This will include server connection and active project
-you can display it by running 
+you can display it by running
 [source,bash]
 ----
 oc config current-context
